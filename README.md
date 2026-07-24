@@ -2,21 +2,14 @@
 
 ## Descrição
 
-Sistema de fluxos de pagamento de ponta a ponta, buscando entender como evitar perdas financeiras e problemas operacionais em ambientes de alta concorrência.
+Sistema de fluxos de pagamento de ponta a ponta, buscando entender como evitar perdas financeiras e problemas operacionais em ambientes de alta concorrência utilizando java e sprint boot em sistemas distribuidos.
 
 ### Objetivo
 
-Fortalecer os conhecimentos de
-arquitetura escalável;
-DDD;
-Arquitetura Hexagonal;
-Spring Boot;
-mensageria;
-observabilidade;
-resiliência;
-boas práticas de engenharia.
+Fortalecer e aplicar os conhecimentos e metódos com a tecnologia implementada sobre o fluxo financeiro, buscando consistencia.
 
 #### Arquitetura
+
 [vision](./vision/) : proposito e limites do sistema.
 
 [market](./market/): armazenar dados do mercado e o que ele pede na engenharia.
@@ -33,8 +26,22 @@ boas práticas de engenharia.
 
 [references](./references/): embasamento da construçao do sistema.
 
+#### Roadmap
 
-##### Tecnologias
+- Foundation
+- Engineering Vision
+- Domain Discovery
+- Architecture
+- Financial Core
+- Idempotency
+- Messaging
+- Resilience
+- Security
+- Observability
+- DevOps
+
+
+###### Tecnologias
 
 Java 21
 
@@ -53,5 +60,4 @@ GitHub Actions
 Prometheus
 
 Grafana
-
 
