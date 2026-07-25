@@ -1,4 +1,4 @@
-# ADR-002 — Java 21
+# ADR-001 — Modular Monolith
 
 ## Status
 
@@ -8,83 +8,78 @@
 
 ## Contexto
 
-A **Vortex** é uma engine de pagamentos e liquidação financeira projetada para executar operações de baixa latência, alta concorrência e tolerância a falhas. Para suportar esse ecossistema, necessitamos de um ambiente de execução (JDK) que ofereça forte suporte à modelagem conceitual do Domain-Driven Design (DDD), alta performance operacional de I/O e facilidade de manutenção de código.
+A **Vortex** é uma engine de pagamentos e liquidação financeira projetada para garantir altíssimo nível de consistência, prevenção contra gasto duplo e resiliência em transações. No estágio atual da aplicação, as fronteiras do domínio e as interações entre os contextos delimitados (como *Payment*, *Ledger* e *Messaging*) estão sendo consolidadas e validadas.
 
-A escolha da versão da plataforma Java influencia a expressividade das regras de negócio, o modelo de concorrência adotado e a compatibilidade com o ecossistema moderno (como Spring Boot 3.x, Hibernate 6.x e Testcontainers).
+A escolha da topologia arquitetural inicial determina diretamente a velocidade de desenvolvimento, a complexidade operacional, os custos de infraestrutura e a facilidade de refatoração do código.
 
 ---
 
 ## Problema
 
-A construção de um sistema financeiro moderno impõe três desafios principais à linguagem e ao runtime:
+Precisamos de uma arquitetura que ofereça:
 
-1. **Segurança no Modelo de Domínio:** Necessidade de garantir imutabilidade em Objetos de Valor (*Value Objects*) e exhaustiveness (verificação exaustiva pelo compilador) em transições de estado de pagamentos, evitando estados inválidos em tempo de execução.
-2. **Concorrência de Alta Vazão sem Complexidade Reativa:** Integrações com adquirentes, bancos de dados e sistemas de mensageria geram muitas operações bloqueantes de I/O. Modelos reativos tradicionais (ex: Project Reactor / WebFlux) resolvem o throughput, mas aumentam dramaticamente a complexidade do código, a curva de aprendizado, a dificuldade de depuração e a perda de contexto de chamadas (*stack traces* difíceis e perda de `ThreadLocal`).
-3. **Estabilidade de Longo Prazo:** Adoção de uma versão com suporte corporativo contínuo (LTS — *Long Term Support*), evitando atualizações constantes de ciclo curto que tragam instabilidade ao ambiente de produção.
+1. **Forte Isolamento de Domínio:** Garantia de desacoplamento entre diferentes contextos de negócio para evitar que o código se torne um monólito acoplado (*Big Ball of Mud*).
+2. **Baixa Complexidade Operacional:** Minimização de falhas distribuídas (latência de rede, serialização, particionamento) durante o amadurecimento das regras de negócio.
+3. **Garantia de Consistência Transacional:** Capacidade de executar operações atômicas no banco de dados local com facilidade quando a regra de negócio exigir.
+4. **Facilidade de Refatoração:** Flexibilidade para redefinir limites de módulos à medida que o conhecimento sobre o domínio financeiro evolui.
+
+O desafio consiste em escolher uma arquitetura que ofereça a disciplina e a modularidade dos microsserviços sem arcar imediatamente com sua complexidade de infraestrutura e redes.
 
 ---
 
 ## Decisão
 
-Adotaremos o **Java 21 (LTS)** como a versão padrão da linguagem e plataforma de execução da **Vortex**.
+Adotaremos a arquitetura de **Monólito Modular (*Modular Monolith*)**.
 
-Abaixo detalhamos como os recursos da linguagem e da plataforma foram associados às necessidades do projeto:
+A aplicação será construída e empacotada como uma **única unidade de deploy** (processo único), porém internamente estruturada em **módulos independentes e estritamente delimitados** (`payment`, `ledger`, `messaging`, etc.).
 
-### 1. Recursos da Linguagem aplicados ao Domínio
-
-* **Records (Value Objects e DTOs):**
-  * *Aplicação:* Mapeamento de objetos imutáveis como `Money`, `Currency`, `AccountId`, `PaymentId` e DTOs de API/Eventos.
-  * *Benefício:* Garante imutabilidade por padrão, elimina código *boilerplate* (`equals`, `hashCode`, `toString`, `getters`) e expressa claramente a semântica do domínio.
-* **Sealed Classes e Interfaces:**
-  * *Aplicação:* Restrição de hierarquias de domínio fechadas, como `PaymentStatus` (`Pending`, `Authorized`, `Settled`, `Failed`) ou tipos de `DomainEvent`.
-  * *Benefício:* O compilador passa a conhecer todas as implementações possíveis de uma interface, impedindo extensões indevidas fora do módulo.
-* **Pattern Matching para `switch` e Record Patterns:**
-  * *Aplicação:* Processamento e despacho de eventos de domínio e maquina de estados de pagamentos.
-  * *Benefício:* Permite desestruturar *Records* diretamente no `switch` com verificação exaustiva do compilador (dispensando o uso de blocos `default` genéricos e evitando falhas em tempo de execução ao adicionar novos estados).
-
-### 2. Recursos do Runtime (JVM) aplicados à Concorrência
-
-* **Virtual Threads (Project Loom):**
-  * *Aplicação:* Execução de requisições síncronas HTTP, chamadas de repositórios JPA/JDBC e clientes de integração.
-  * *Benefício:* Permite adotar o modelo intuitivo *thread-per-request* (código imperativo síncrono tradicional) enquanto atinge a capacidade de escala de I/O de arquiteturas reativas. Não exige reescrever a base de código em estilo reativo.
+### Regras de Convivência entre Módulos:
+* **Comunicação por Contratos Explícitos:** Um módulo não pode acessar diretamente tabelas ou entidades de outro módulo.
+* **Isolamento de Persistência:** Cada módulo possui seu próprio conjunto de tabelas/esquemas organizados logicamente.
+* **Invocação via Interfaces ou Eventos:** A comunicação síncrona entre módulos é feita exclusivamente por interfaces de serviços (In-Memory Ports), enquanto a assíncrona utiliza eventos de domínio.
 
 ---
 
 ## Alternativas Consideradas
 
-### Alternativa 1: Java 17 (LTS)
+### Alternativa 1: Arquitetura de Microsserviços Distribuídos
 
-* **Pontos Fortes:** Versão LTS madura, amplamente adotada pela indústria e com total compatibilidade de bibliotecas terceiras.
-* **Por que foi descartada:** Embora suporte *Records* e *Sealed Classes*, o Java 17 não possui **Virtual Threads** nativos de produção nem as evoluções finais de *Pattern Matching* para *Records*. Para atingir alta vazão de I/O no Java 17, seríamos forçados a usar frameworks reativos ou arcar com o custo de memória de *Platform Threads* tradicionais do sistema operacional.
+Divisão imediata da aplicação em múltiplos serviços independentes (ex: *Payment Service*, *Ledger Service*, *Outbox Service*), cada um com seu próprio ciclo de deploy e banco de dados isolado.
 
-### Alternativa 2: Java 22 ou Versões Não-LTS posteriores
+* **Pontos Fortes:**
+  * Escalabilidade independente por módulo.
+  * Autonomia total de deploy para equipes distintas.
+  * Isolamento de falhas em nível de processo/infraestrutura.
+* **Por que foi descartada:**
+  * **Overhead Operacional Prematuro:** Exige infraestrutura complexa (serviço de descoberta, mTLS, tracing distribuído, observabilidade em malha).
+  * **Complexidade Transacional:** Exige o uso do padrão Saga e consistência eventual para cenários onde a transação atômica local ainda é o requisito mais seguro.
+  * **Custo de Refatoração:** Alterar fronteiras de domínio incorretas entre microsserviços exige mudanças em múltiplos repositórios, contratos de rede e pipelines de CI/CD.
 
-* **Pontos Fortes:** Acesso imediato a recursos mais recentes em pré-visualização (*Preview Features*).
-* **Por que foi descartada:** Versões não-LTS possuem ciclo de vida curto (6 meses de suporte) e geram instabilidade e custo de manutenção contínuo para sistemas financeiros, não sendo recomendadas para ambientes de produção críticos.
+### Alternativa 2: Monólito Tradicional Camado (Layered Monolith)
 
----
+Organização do sistema em camadas globais (ex: `controllers`, `services`, `repositories`) compartilhadas por toda a aplicação.
 
-## Diferenciação: Linguagem vs. Ecossistema
-
-Para clareza da decisão, distinguimos os ganhos diretos do Java 21 em duas frentes:
-
-| Âmbito | Benefícios Diretos no Projetos |
-| :--- | :--- |
-| **Linguagem (Java 21)** | • Tipagem forte, imutabilidade com *Records* e sintaxe mais limpa.<br>• *Pattern Matching* e *Sealed Classes* protegendo invariants do domínio.<br>• Redução drástica de linhas de código utilitário (*boilerplate*). |
-| **Ecossistema & Runtime** | • **Virtual Threads** otimizando o uso de CPU e memória em operações de I/O.<br>• Compatibilidade nativa com Spring Boot 3.2+ / 3.x e Hibernate 6.x.<br>• Melhorias contínuas no Garbage Collector (ZGC) reduzindo *pausas de Stop-The-World*. |
+* **Pontos Fortes:**
+  * Extrema simplicidade inicial de implementação.
+  * Facilidade de navegação em projetos pequenos.
+* **Por que foi descartada:**
+  * **Risco de Acoplamento Descontrolado:** Sem barreiras rígidas de código, regras de *Ledger* e *Payment* terminam misturadas nos mesmos serviços e tabelas.
+  * **Dificuldade de Testes:** Impossibilidade de testar módulos em isolamento total.
 
 ---
 
 ## Consequências
 
 ### Consequências Positivas
-* **Código de Domínio Expressivo e Seguro:** Domínio financeiro à prova de estados inconsistentes, validado durante a compilação.
-* **Simplicidade de Debugging e Observabilidade:** Código imperativo fácil de depurar e rastrear stack traces ponta a ponta, permitindo a propagação simples de `Correlation-ID` via contexto de thread.
-* **Desempenho com Baixa Pegada de Memória:** Milhares de *Virtual Threads* leves alocadas em memória sem o overhead de threads de SO.
+* **Simplicidade de Deploy e Execução:** Apenas um artefato para construir, testar, containerizar e implantar.
+* **Latência Mínima:** A comunicação entre sub-domínios ocorre em memória (chamadas de método), sem overhead de rede ou serialização HTTP/gRPC.
+* **Evolução Segura do Domínio:** Permite ajustar limites entre sub-domínios via refatoração simples no código antes de fixar contratos de rede.
+* **Transições Transacionais Flexíveis:** Possibilita manter transações ACID locais nos fluxos onde a consistência imediata é mandatória para a segurança financeira.
 
 ### Consequências Negativas
-* **Exigência de Tooling Atualizado:** Obriga o uso de JDK 21+ no ambiente de desenvolvimento do desenvolvedor, nas imagens de container Docker e nos agentes de execução de CI/CD.
-* **Atenção a Bibliotecas Legadas:** Bibliotecas antigas que utilizem `synchronized` em blocos de I/O longo podem causar *pinning* de Virtual Threads (embora a maioria dos drivers modernos, como Postgres JDBC, já estejam adaptados).
+* **Escalabilidade Unificada:** Não é possível dimensionar recursos (CPU/Memória) de forma isolada para um único módulo de alta demanda; toda a aplicação deve ser escalada junto.
+* **Acoplamento de Runtime:** Um erro crítico em tempo de execução (ex: *Out Of Memory*) em um módulo afeta a disponibilidade do processo inteiro.
+* **Risco de Permeabilidade:** Sem o uso de ferramentas de enforcement de arquitetura (como ArchUnit ou visibilidade de pacotes do Java), desenvolvedores podem quebrar a modularidade acidentalmente.
 
 ---
 
@@ -92,23 +87,26 @@ Para clareza da decisão, distinguimos os ganhos diretos do Java 21 em duas fren
 
 | O que ganhamos | O que abrimos mão |
 | :--- | :--- |
-| **Alta vazão de I/O com estilo de código síncrono/imperativo** | Compatibilidade com sistemas legados ou infraestruturas presas a JDKs antigos (< 21) |
-| **Segurança de compilação estrita em máquinas de estado financeiras** | Flexibilidade de criação de hierarquias abertas ou dinâmicas |
-| **Aproveitamento máximo do suporte de longo prazo da Oracle/Comunidade** | Adoção de recursos *bleeding-edge* experimentais de versões não-LTS |
+| **Simplicidade operacional e baixo custo de infraestrutura** | Escalabilidade e deploy independentes por funcionalidade |
+| **Refatoração rápida de regras de domínio e chamadas em memória** | Isolamento de falhas em tempo de execução por processo |
+| **Facilidade de testes de integração ponta a ponta** | Diversidade tecnológica livre por módulo |
 
 ---
 
 ## Revisitando a Decisão no Futuro
 
-Esta decisão poderá ser reavaliada nos seguintes cenários:
+Esta decisão arquitetural não é definitiva e deve ser reavaliada caso o projeto atinja os seguintes gatilhos de mudança:
 
-1. **Lançamento do Próximo Java LTS (ex: Java 25):** Para avaliar novos ganhos de performance ou funcionalidades de linguagem consolidadas.
-2. **Incompatibilidade Crítica de Infraestrutura:** Se alguma dependência core de produção indispensável do ecossistema demonstrar incompatibilidade severa e não corrigível com a JVM 21.
+1. **Divergência de Escalabilidade:** Quando um módulo específico (ex: consulta de extrato/ledger) exigir volume de escala 10x maior que os demais, justificando a separação física.
+2. **Crescimento Organizacional:** Quando o projeto for mantido por múltiplas equipes autônomas que necessitem de ciclos de release e pipelines de deploy totalmente desvinculados.
+3. **Maturidade de Domínio:** Quando as fronteiras dos contextos delimitados estiverem 100% consolidadas e comprovadas em produção.
+
+*Nota: Graças ao isolamento estrito imposto pelo Monólito Modular, a eventual extração de um módulo para um microsserviço no futuro será uma tarefa cirúrgica, e não uma reescrita total.*
 
 ---
 
-## Relação com os Princípios Arquiteturais e Roadmap
+## Relação com os Princípios Arquiteturais
 
-* **Simplicidade Pragmática:** Adoção do modelo imperativo de *Virtual Threads* evita a complexidade acidental de código reativo sem perder escalabilidade.
-* **Isolamento e Segurança do Domínio:** *Records* e *Sealed Classes* garantem que as regras de negócio mapeadas na **Fase 1 do Roadmap Técnico** permaneçam puras, imutáveis e isoladas.
-* **Alinhamento com o Roadmap:** Prepara a fundação para os testes de integração e concorrência da **Fase 3**, assegurando que os mecanismos de concorrência funcionem sobre uma JVM moderna.
+* **Priorização da Consistência sobre Disponibilidade:** O Monólito Modular viabiliza o controle estrito de transações ACID no banco relacional local antes do disparo de eventos assíncronos.
+* **Isolamento de Domínio:** Preserva a independência conceitual dos contextos delimitados do DDD dentro do mesmo repositório.
+* **Simplicidade Pragmática:** Evita a sobrecarga de sistemas distribuídos enquanto a equipe e o produto ainda estão validando os requisitos fundamentais do negócio.
