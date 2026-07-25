@@ -1,0 +1,374 @@
+# Technical Roadmap
+
+
+
+Este documento estabelece a estratégia sequencial de desenvolvimento do **Vortex**. Ele define a ordem cronológica de construção dos componentes, justificando as dependências técnicas entre cada fase e explicitando os riscos de inverter a sequência planejada.
+
+
+
+---
+
+
+
+## Estratégia de implementação
+
+
+
+A estratégia adota a abordagem **Inside-Out (de dentro para fora)**, alinhada aos princípios da Arquitetura Hexagonal e do Domain-Driven Design (DDD). 
+
+
+
+A ordem de construção segue o princípio da **redução progressiva de riscos financeiros e técnicos**:
+
+
+
+1. **Domínio em Primeiro Lugar:** Validar as regras matemáticas e operacionais puras antes de conectar qualquer banco ou framework.
+
+2. **Consistência Local antes da Distribuída:** Garantir ACID e ausência de gasto duplo no banco relacional antes de disparar eventos para a rede.
+
+3. **Resiliência após a Funcionalidade:** Proteger o sistema contra falhas externas apenas quando o fluxo interno estiver estabilizado.
+
+4. **Observabilidade sobre Código Estável:** Instrumentar fluxos consolidados para evitar refatoração constante de métricas e rastros.
+
+
+
+---
+
+
+
+## Fase 1 — Fundação do Domínio
+
+
+
+### Objetivo
+
+Modelar o núcleo puro de negócio dos módulos de **Pagamento** e **Ledger**, isolando completamente as entidades financeiras de dependências externas.
+
+
+
+### O que é construído
+
+* Mapeamento dos Bounded Contexts (`payment`, `ledger`).
+
+* Objetos de Valor imutáveis (`Money`, `Currency`, `PaymentStatus`, `AccountId`).
+
+* Entidades e Agregados com métodos de negócio (ex: `Account.reserve()`, `Payment.authorize()`).
+
+* Exceções de domínio explícitas (ex: `InsufficientBalanceException`).
+
+
+
+### Por que esta fase vem primeiro?
+
+O maior risco em sistemas financeiros é a corrupção de regras de negócio por vazamento de detalhes tecnológicos. Construir o domínio de forma pura garante que cálculos de saldo, limites e validações possam ser testados em milissegundos, sem necessidade de subir bancos de dados ou contextos do Spring.
+
+
+
+### Risco de inverter esta fase
+
+Se a infraestrutura ou o banco de dados forem criados antes do domínio, o modelo financeiro ficará acoplado às anotações da ORM (JPA/Hibernate) ou às estruturas de tabelas. Isso gera código espaguete, testes lentos e alto custo para refatorar regras de negócio no futuro.
+
+
+
+---
+
+
+
+## Fase 2 — Núcleo Financeiro
+
+
+
+### Objetivo
+
+Implementar a camada de aplicação (Casos de Uso) e expor os contratos síncronos de entrada e saída por meio de Portas e Adaptadores (Ports & Adapters).
+
+
+
+### O que é construído
+
+* Casos de uso de aplicação (`CreatePaymentUseCase`, `ReserveBalanceUseCase`).
+
+* Contratos de entrada e saída (Inbound/Outbound Ports).
+
+* Adaptadores de persistência básicos com PostgreSQL (Repositories JPA/JDBC).
+
+* Endpoints REST (Controllers / Entrypoints) para recepção das transações.
+
+
+
+### Por que depende da Fase 1?
+
+Casos de uso são apenas orquestradores: eles buscam dados via portas, chamam métodos do domínio e persistem o resultado. Sem um domínio puro e validado (Fase 1), os casos de uso teriam que assumir a responsabilidade de executar regras financeiras, violando o princípio da responsabilidade única.
+
+
+
+### Risco de inverter esta fase
+
+Tentar criar APIs ou persistência sem o domínio pronto resulta em "Anemic Domain Models" (modelos anêmicos), onde o banco de dados dita as regras do sistema e os controllers/services concentram toda a lógica de negócio.
+
+
+
+---
+
+
+
+## Fase 3 — Consistência e Concorrência
+
+
+
+### Objetivo
+
+Garantir a integridade financeira local, eliminando riscos de gasto duplo, *race conditions* e cobranças duplicadas na borda síncrona.
+
+
+
+### O que é construído
+
+* Bloqueios transacionais (Pessimistic Locking / Optimistic Locking) na tabela de contas do Ledger.
+
+* Interceptador de Idempotência utilizando `Idempotency-Key` respaldado por armazenamento chave-valor (Redis/PostgreSQL).
+
+* Configuração explícita de limites transacionais (`@Transactional` com isolamento adequado).
+
+
+
+### Por que depende da Fase 2?
+
+Para proteger uma transação contra concorrência e duplicidade, é necessário que o fluxo de persistência síncrono e os endpoints (Fase 2) já existam. O controle de concorrência atua diretamente nas entidades e tabelas que foram mapeadas na fase anterior.
+
+
+
+### Risco de inverter esta fase
+
+Tentar implementar mensageria assíncrona ou resiliência externa antes de resolver a concorrência local fará com que requisições paralelas gerem gasto duplo no banco de dados. Um sistema distribuído não consegue corrigir inconsistências que acontecem no seu próprio banco local.
+
+
+
+---
+
+
+
+## Fase 4 — Comunicação Assíncrona
+
+
+
+### Objetivo
+
+Garantir a publicação confiável de eventos de domínio sem incorrer no problema de dupla escrita (*Dual-Write Problem*).
+
+
+
+### O que é construído
+
+* Tabela de Outbox no banco relacional local.
+
+* Padrão *Transactional Outbox* para gravação atômica do evento junto com a transação financeira.
+
+* Processor/Relay assíncrono para leitura do Outbox e publicação no **Apache Kafka**.
+
+* Consumidores assíncronos internos para atualização de status e conciliação.
+
+
+
+### Por que depende da Fase 3?
+
+A publicação de eventos só é confiável se a transação local que originou o evento for atômica e imune a condições de corrida (Fase 3). O padrão Outbox necessita da transação do banco de dados já estabilizada para gravar a intenção do evento no mesmo `COMMIT`.
+
+
+
+### Risco de inverter esta fase
+
+Disparar mensagens para o Kafka diretamente do Caso de Uso antes de consolidar a transação local causa o problema de *Dual-Write*: o evento é publicado no Kafka, mas a transação no Postgres sofre rollback (ou vice-versa). Isso propaga dados inconsistentes por toda a malha de serviços.
+
+
+
+---
+
+
+
+## Fase 5 — Resiliência
+
+
+
+### Objetivo
+
+Proteger a engine contra degradação e falhas em cascata causadas por instabilidades em serviços externos (gateways de pagamento, adquirentes e sistemas de antifraude).
+
+
+
+### O que é construído
+
+* Implementação de **Circuit Breaker** para isolar parceiros indisponíveis.
+
+* Políticas de **Retry com Exponential Backoff e Jitter** para falhas transitórias de rede.
+
+* Configuração de **Timeouts** rígidos em todas as chamadas HTTP/gRPC externas.
+
+* Mecanismos de **Fallback** e roteamento para filas de mensagens mortas (**DLQ — Dead Letter Queue**).
+
+
+
+### Por que depende da Fase 4?
+
+Padrões de resiliência e retentativas dependem de uma infraestrutura assíncrona robusta (Fase 4) para onde redirecionar mensagens que esgotaram suas tentativas de processamento (DLQ) ou onde reter chamadas com falhas.
+
+
+
+### Risco de inverter esta fase
+
+Inserir retentativas (Retries) ou Circuit Breakers em um sistema sem garantia de idempotência (Fase 3) ou sem publicação confiável de eventos (Fase 4) causará cobranças duplicadas e amplificação do tráfego em cenários de instabilidade.
+
+
+
+---
+
+
+
+## Fase 6 — Segurança
+
+
+
+### Objetivo
+
+Proteger as portas de entrada da aplicação, garantindo autenticação, autorização e a integridade dos dados trafegados.
+
+
+
+### O que é construído
+
+* Autenticação e autorização via Tokens JWT / OAuth2 nos endpoints de entrada.
+
+* Sanitização estrita de payload e validação de schema nas APIs.
+
+* Mascaramento automatizado de dados sensíveis (PII / Dados de Cartão) em logs de aplicação.
+
+* Comunicação segura (TLS/mTLS) na integração com serviços parceiros.
+
+
+
+### Por que depende da Fase 5?
+
+Proteger a aplicação é a etapa de fechamento do perímetro de execução. Com a lógica de resiliência e tratamento de exceções (Fase 5) prontos, as falhas de segurança e rejeições de acesso (HTTP 401/403) são tratadas de forma padronizada sem expor stack traces ou detalhes internos.
+
+
+
+### Risco de inverter esta fase
+
+Adicionar camadas complexas de segurança e autenticação nas fases iniciais reduz dramaticamente a velocidade de desenvolvimento e prototipação das regras de negócio complexas do domínio e da arquitetura assíncrona.
+
+
+
+---
+
+
+
+## Fase 7 — Observabilidade
+
+
+
+### Objetivo
+
+Tornar a engine totalmente transparente e auditável em tempo real, permitindo rastreabilidade ponta a ponta de qualquer transação financeira.
+
+
+
+### O que é construído
+
+* Propagação automatizada de **Correlation-ID** em requisições HTTP e headers do Kafka.
+
+* Exposição de métricas de negócio e infraestrutura via **Prometheus** (ex: taxa de aprovação, tempo de reserva de saldo, tamanho do Outbox).
+
+* Rastreamento distribuído (**Distributed Tracing**) com **OpenTelemetry**.
+
+* Dashboards de monitoramento e alertas operacionais no **Grafana**.
+
+
+
+### Por que depende da Fase 6?
+
+Instrumentar um sistema exige que todos os caminhos de execução síncronos, assíncronos, resilientes e de segurança estejam definidos. Rastrear uma transação envolve capturar o `Correlation-ID` desde a autenticação (Fase 6) até a publicação final do evento no Kafka (Fase 4).
+
+
+
+### Risco de inverter esta fase
+
+Tentar criar métricas e rastros em um sistema cujos fluxos de execução ainda estão mudando resulta em métricas inúteis, poluição de logs e necessidade constante de reescrever instrumentações.
+
+
+
+---
+
+
+
+## Fase 8 — DevOps e Entrega
+
+
+
+### Objetivo
+
+Automatizar o ciclo de vida da aplicação, garantindo pipelines de integração contínua, empacotamento seguro e provisionamento reprodutível da infraestrutura.
+
+
+
+### O que é construído
+
+* Pipeline de **CI/CD** (GitHub Actions) com etapas de build, análise estática de código e execução automatizada de suíte de testes.
+
+* Otimização do `Dockerfile` multi-stage para geração de imagens leves e seguras.
+
+* Orquestração de dependências locais de infraestrutura via **Docker Compose** (Kafka, Postgres, Redis, Prometheus).
+
+* Scripts de Infraestrutura como Código (IaC) para provisionamento de ambientes.
+
+
+
+### Por que depende da Fase 7?
+
+O pipeline de integração e entrega (CI/CD) deve validar a aplicação completa, garantindo que testes unitários (Fase 1), testes de integração (Fase 2/3), resiliência (Fase 5) e validações de observabilidade (Fase 7) passem sem regressões antes de permitir o deploy.
+
+
+
+### Risco de inverter esta fase
+
+Construir pipelines complexas e scripts de deploy nas primeiras semanas gera manutenção desnecessária de automações para um software cuja estrutura básica ainda não está consolidada.
+
+
+
+---
+
+
+
+## Critérios para evolução entre fases
+
+
+
+Para assegurar que o projeto avance com qualidade e sem débitos técnicos acumulados, a transição entre as fases deve obedecer aos seguintes critérios formais (*Quality Gates*):
+
+┌─────────┐    Passa nos Gates?    ┌─────────┐
+
+│ Fase N  │ ─────────────────────► │ Fase N+1│
+
+└─────────┘     (Sim -> Avança)    └─────────┘
+
+
+
+| Transição de Fase | Critérios de Qualidade para Aprovação (Quality Gates) |
+
+| :--- | :--- |
+
+| **Fase 1 ➔ Fase 2** | • Cobertura de testes unitários do `domain` acima de 90%.<br>• Zero dependências de frameworks (Spring/JPA) no módulo de domínio. |
+
+| **Fase 2 ➔ Fase 3** | • Testes de integração síncronos validando o fluxo feliz de ponta a ponta.<br>• Contratos REST versionados e documentados. |
+
+| **Fase 3 ➔ Fase 4** | • Testes de carga/concorrência provando ausência de gasto duplo em acessos simultâneos.<br>• Validação da rejeição de requisições duplicadas via `Idempotency-Key`. |
+
+| **Fase 4 ➔ Fase 5** | • Testes de integração provando que transações no Postgres e registros no Outbox ocorrem no mesmo `COMMIT`.<br>• Garantia de publicação de eventos no Kafka sem perda de dados. |
+
+| **Fase 5 ➔ Fase 6** | • Validação do acionamento do Circuit Breaker em simulações de falha da adquirente.<br>• Mensagens não processadas sendo direcionadas corretamente para a DLQ. |
+
+| **Fase 6 ➔ Fase 7** | • Endpoints protegidos contra requisições não autenticadas.<br>• Dados sensíveis mascarados em 100% dos logs gerados. |
+
+| **Fase 7 ➔ Fase 8** | • `Correlation-ID` propagado com sucesso entre chamadas HTTP e eventos do Kafka.<br>• Dashboards do Grafana coletando métricas ativas via Prometheus. |
+
+| **Conclusão (Fase 8)** | • Pipeline de CI/CD executando a suíte completa de testes automatizados com sucesso.<br>• Subida do ambiente completo com um único comando (`docker compose up`). |
+
