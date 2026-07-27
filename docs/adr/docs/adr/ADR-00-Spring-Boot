@@ -1,0 +1,159 @@
+# ADR-003 — Spring Boot
+
+## Status
+
+**Aceito**
+
+---
+
+## Contexto
+
+A **Vortex** é uma engine de pagamentos e liquidação financeira construída como um **Monólito Modular** (ADR-001) sobre o **Java 21** (ADR-002). A aplicação adota a **Arquitetura Hexagonal (Ports & Adapters)** e os princípios do Domain-Driven Design (DDD) para garantir que as regras de negócio de *Payment* e *Ledger* permaneçam isoladas de detalhes tecnológicos.
+
+Para operacionalizar a infraestrutura — incluindo injeção de dependências, servidores Web REST, persistência em banco relacional, segurança e observabilidade —, é necessário definir a estratégia de frameworks da aplicação.
+
+---
+
+## Problema
+
+A construção de uma engine financeira de alta confiabilidade exige uma infraestrutura robusta para tratar preocupações transversais (*cross-cutting concerns*). O desafio reside em equilibrar duas forças opostas:
+
+1. **Produtividade e Robustez de Infraestrutura:** Reconstruir do zero componentes de conexão com banco de dados, gerenciamento de transações ACID, roteamento HTTP, autenticação e métricas gera complexidade acidental massiva e aumenta o risco de falhas de segurança ou resiliência.
+2. **Preservação da Arquitetura Hexagonal:** O uso de frameworks corporativos frequentemente leva ao vazamento de anotações e tipos do framework (ex: `@Entity`, `@Component`, `@Autowired`) para o núcleo do domínio, corrompendo o modelo de negócio e gerando acoplamento forte (*lock-in*).
+
+Precisamos de uma solução que resolva a infraestrutura de forma madura sem comprometer o purismo e o isolamento do domínio de negócio.
+
+---
+
+## Decisão
+
+Adotaremos o **Spring Boot 3.x** como a base de infraestrutura da **Vortex**.
+
+O Spring Boot é tratado exclusivamente como um mecanismo de composição (*Composition Root*) da aplicação, responsável por instanciar adaptadores, configurar componentes de infraestrutura e conectar dependências, sem participar da implementação das regras de negócio. O framework atuará **apenas na camada de adaptadores e infraestrutura**, sendo estritamente proibida sua presença no núcleo do domínio.
+
+### 1. Módulos e Funcionalidades Utilizadas
+
+* **Spring IoC / DI (Injeção de Dependência):** Utilizado para instanciar e conectar adaptadores de infraestrutura aos casos de uso da aplicação.
+* **Spring Web (MVC):** Utilizado nos adaptadores de entrada (*Inbound Adapters*) para exposição de APIs REST e gerenciamento do ciclo de vida das requisições HTTP.
+* **Spring Data JPA / JDBC:** Utilizado nos adaptadores de saída (*Outbound Adapters*) para mapeamento de persistência no PostgreSQL.
+* **Spring Validation (Bean Validation / Hibernate Validator):** Utilizado na borda da aplicação (*Entrypoints*) para validação de schemas de requisições REST antes do envio aos casos de uso.
+* **Spring Security:** Utilizado na camada de borda para autenticação (OAuth2/JWT) e autorização de escopos.
+* **Spring Boot Actuator & Micrometer:** Utilizado para exposição de *health checks*, métricas operacionais para o Prometheus e integração com observabilidade.
+
+### 2. Guardrails para Proteção da Arquitetura Hexagonal
+
+Para impedir que o Spring Boot contamine o núcleo da aplicação, estabelecemos a seguinte hierarquia de dependências e regras arquiteturais:
+
+```mermaid
+graph TD
+    Infrastructure --> Application
+    Application --> Domain
+```
+
+* **Dependências Unidirecionais:** As dependências entre camadas sempre apontam em direção ao núcleo (`Infrastructure` → `Application` → `Domain`), nunca no sentido inverso.
+* **Domínio Livre de Frameworks:** Nenhuma classe pertencente ao módulo `domain` pode depender de qualquer pacote `org.springframework.*`, `jakarta.persistence.*` ou equivalente.
+* **Casos de Uso Independentes:** A camada `application` conhece apenas portas (interfaces) e objetos do domínio, sem dependência de componentes diretos do Spring.
+* **Controle Transacional:** O gerenciamento de transações (`@Transactional`) pertence à camada de aplicação ou infraestrutura, jamais ao domínio.
+* **Anotações Restritas à Infraestrutura:** Anotações como `@RestController`, `@Service`, `@Repository`, `@Configuration` e `@Entity` são permitidas exclusivamente nos adaptadores de infraestrutura e montagem.
+* **Inversão de Dependência Obrigatória:** Adaptadores implementam interfaces definidas pela aplicação; o domínio nunca referencia implementações concretas.
+* **Enforcement Arquitetural:** Regras de dependência e desacoplamento serão verificadas automaticamente por testes de arquitetura (ArchUnit) durante a fase de build no CI/CD, impedindo violações durante o desenvolvimento.
+
+---
+
+## Alternativas Consideradas
+
+### Alternativa 1 — Jakarta EE
+
+* **Pontos Fortes:**
+  * Padronização oficial pela especificação Jakarta.
+  * Independência de um fornecedor específico.
+  * Ecossistema corporativo historicamente consolidado.
+* **Por que foi descartada:**
+  * Ecossistema menor voltado para produtividade moderna e acelerada.
+  * Configuração mais verbosa e dependência de servidores de aplicação tradicionais.
+  * Menor integração nativa e fluida com ferramentas modernas utilizadas no projeto (Testcontainers, Observabilidade OpenTelemetry, Spring Security, etc.).
+
+### Alternativa 2 — Quarkus
+
+* **Pontos Fortes:**
+  * Inicialização extremamente rápida (*cold start* em milissegundos).
+  * Excelente e reduzido consumo de memória RAM.
+  * Forte integração com GraalVM Native Image.
+* **Por que foi descartada:**
+  * Apesar das vantagens em startup e memória, essas características não representam gargalos relevantes para uma aplicação financeira de longa duração, onde corretude, produtividade e maturidade do ecossistema têm maior peso.
+  * Ecossistema e comunidade menores em comparação ao Spring Boot.
+  * Menor disponibilidade de exemplos, documentação e bibliotecas maduras voltadas a casos complexos do domínio financeiro.
+
+### Alternativa 3 — Micronaut
+
+* **Pontos Fortes:**
+  * Baixo consumo de memória.
+  * Injeção de dependências realizada em tempo de compilação (evitando reflexão no boot).
+  * Excelente performance e facilidade de integração.
+* **Por que foi descartada:**
+  * Ecossistema menor em expansão.
+  * Menor adoção em larga escala no mercado financeiro brasileiro.
+  * Não apresenta vantagem competitiva suficiente para justificar a troca em relação ao ecossistema maduro do Spring Boot 3.x com Virtual Threads.
+
+---
+
+## Consequências
+
+### Consequências Positivas
+* **Ecossistema Extremamente Maduro:** Acesso à maior comunidade Java e à mais vasta suíte de extensões corporativas.
+* **Grande Disponibilidade de Bibliotecas:** Facilidade de integração com PostgreSQL, Kafka, Redis e OpenTelemetry.
+* **Recursos Nativos Consolidados:** Suporte maduro e padronizado para transações declarativas, segurança, validação e observabilidade.
+* **Facilidade com Testcontainers:** Integração fluida para testes de integração de infraestrutura.
+* **Alto Alinhamento de Mercado:** Total aderência aos requisitos técnicos e arquiteturais do mercado de engenharia de software sênior.
+
+### Consequências Negativas
+* **Startup Mais Lento:** Tempo de inicialização superior a frameworks como Quarkus ou Micronaut.
+* **Maior Consumo de Memória:** Footprint de memória RAM superior no runtime.
+* **Curva de Aprendizado:** O ecossistema Spring possui uma superfície de APIs extensa, exigindo disciplina para selecionar apenas os módulos realmente necessários e evitar complexidade desnecessária.
+* **Risco de Abuso do Framework:** Possibilidade de uso indiscriminado de anotações (`@Autowired`, entidades anêmicas) caso não haja rigor nos reviews.
+* **Risco de Acoplamento Acidental:** Possibilidade de vazamento de dependências para o domínio caso os guardrails não sejam validados de forma automatizada.
+
+---
+
+## Trade-offs
+
+| O que ganhamos | O que abrimos mão |
+| :--- | :--- |
+| **Ecossistema Java mais consolidado e produtivo** | Menor consumo de memória de frameworks mais enxutos |
+| **Alta produtividade e abstrações maduras** | Startup extremamente rápido de soluções focadas em Serverless |
+| **Integração madura com ferramentas corporativas** | Compilação nativa simplificada por padrão |
+| **Grande oferta de documentação e comunidade** | Menor tamanho do runtime em disco/memória |
+
+---
+
+## Revisitando a Decisão
+
+Esta decisão poderá ser revista quando ocorrer pelo menos um dos seguintes cenários:
+
+1. **Mudança para Serverless/FaaS:** Necessidade comprovada de startup inferior a alguns segundos para cenários de execução efémera.
+2. **Restrição Severa de Recursos:** Necessidade extrema e comprovada de redução de consumo de memória RAM em ambientes altamente restritos.
+3. **Evolução de Alternativas:** Maturidade equivalente de outro framework que apresente ganhos mensuráveis sem comprometer a estabilidade arquitetural e a produtividade da equipe.
+
+---
+
+## Relação com os ADRs Anteriores e o Project Roadmap
+
+Esta decisão complementa e reforça as diretrizes estabelecidas no projeto:
+
+* **ADR-001 (Modular Monolith):** Spring Boot atua como *Composition Root* da aplicação, funcionando como mecanismo de montagem e injeção de dependências dos módulos, preservando rigorosamente o isolamento de cada contexto delimitado.
+* **ADR-002 (Java 21):** Aproveita integralmente as *Virtual Threads*, *Records* e *Pattern Matching* do Java 21 sem impor o paradigma de programação reativa (Project Reactor/WebFlux).
+* **Princípios Arquiteturais:** Mantém o núcleo do domínio completamente agnóstico e independente de detalhes de infraestrutura.
+* **Technical Roadmap:** Dá suporte direto às **Fases 2, 5, 6 e 7**, responsáveis por núcleo financeiro, resiliência, segurança e observabilidade.
+
+---
+
+## Validação Automatizada de Arquitetura (ArchUnit)
+
+Para garantir que os guardrails e a separação de camadas definidos neste ADR não dependam exclusivamente do alinhamento manual da equipe, adotaremos o **ArchUnit** integrado ao pipeline de CI/CD.
+
+### Regras Executáveis de Arquitetura:
+1. `domain` **não pode importar** `org.springframework.*` nem `jakarta.persistence.*`.
+2. `application` **não pode depender de** `infrastructure`.
+3. `infrastructure` **pode depender de** `application`, mas **nunca o contrário**.
+4. Módulos internos (`payment`, `ledger`, `messaging`) **não podem acessar implementações internas privadas** uns dos outros, comunicando-se apenas via contratos explícitos.
+5. **Integridade do Domínio:** Apenas os agregados e entidades do domínio são responsáveis por alterar seu próprio estado via métodos públicos; nenhuma classe fora do domínio pode modificar diretamente o estado interno das entidades de domínio sem passar por seus métodos de negócio.
