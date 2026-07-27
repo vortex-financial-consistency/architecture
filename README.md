@@ -1,8 +1,10 @@
+# README
+
 # Vortex Financial Consistency
 
 ## Descrição
 
-Sistema de fluxos de pagamento de ponta a ponta, buscando entender como evitar perdas financeiras e problemas operacionais em ambientes de alta concorrência utilizando java e sprint boot em sistemas distribuidos.
+Sistema de fluxos de pagamento de ponta a ponta, buscando entender como evitar perdas financeiras e problemas operacionais em ambientes de alta concorrência utilizando java e spring boot em sistema...
 
 ### Objetivo
 
@@ -10,21 +12,23 @@ Fortalecer e aplicar os conhecimentos e metódos com a tecnologia implementada s
 
 #### Arquitetura
 
-[vision](./vision/) : proposito e limites do sistema.
+[vision](./docs/vision/) : propósito e limites do sistema.
 
-[market](./market/): armazenar dados do mercado e o que ele pede na engenharia.
+[market](./docs/market/): armazenar dados do mercado e o que ele pede na engenharia.
 
-[adr](./adr/):historico das decisoes tecnicas.
+[adr](./docs/adr/): histórico das decisões técnicas.
 
-[domain](./domain/): logica, termos e regras de negocio especificados.
+[domain](./docs/domain/): lógica, termos e regras de negocio especificados.
 
-[architecture](./architecture/): estrutura do software.
+[architecture](./docs/architecture/): estrutura do software.
 
-[diagrams](./diagrams/): visual direcionando fluxos e codigos.
+[diagrams](./docs/diagrams/): visual direcionando fluxos e codigos.
 
-[decisions](./decisions/): trade-offs do escopo.
+[decisions](./docs/decisions/): trade-offs do escopo.
 
-[references](./references/): embasamento da construçao do sistema.
+[references](./docs/references/): embasamento da construçao do sistema.
+
+[development](./docs/development/): o que será implementado e roadmap do projeto.
 
 #### Roadmap
 
@@ -39,7 +43,6 @@ Fortalecer e aplicar os conhecimentos e metódos com a tecnologia implementada s
 - Security
 - Observability
 - DevOps
-
 
 ###### Tecnologias
 
@@ -60,4 +63,3 @@ GitHub Actions
 Prometheus
 
 Grafana
-

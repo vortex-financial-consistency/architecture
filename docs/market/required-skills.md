@@ -1,6 +1,6 @@
 # Required Skills
 
-Este documento define o conjunto de competências técnicas que esta engine de pagamentos demonstra. O objetivo é refletir o nível de maturidade exigido para profissionais de Engenharia Backend (Pleno/Sênior) no mercado financeiro.
+Este documento define o conjunto de competências técnicas que esta engine de pagamentos demonstra. O objetivo é refletir o nível de maturidade exigido para profissionais de Engenharia Backend (e orientar contratações e expectativas de time).
 
 ---
 
@@ -15,7 +15,7 @@ Este documento define o conjunto de competências técnicas que esta engine de p
 ## Competências de Backend
 
 * **Gerenciamento de Transações (Transaction Management):** Domínio amplo de propriedades ACID, níveis de isolamento, estratégias de commit/rollback e integridade financeira.
-* **Controle de Concorrência:** Protege o saldo das contas contra requisições simultâneas no mesmo milissegundo, eliminando o risco de gasto duplo.
+* **Controle de Concorrência:** Protege o saldo das contas contra requisições simultâneas, eliminando o risco de gasto duplo.
 * **Design Orientado a Interfaces:** Desacopla contratos de uso de suas implementações reais, facilitando a criação de dublês de teste e simulação de dependências.
 * **Versionamento de APIs:** Permite evoluir contratos de integração de pagamentos sem quebrar clientes ou parceiros que utilizam versões anteriores.
 
