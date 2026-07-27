@@ -1,10 +1,5 @@
 # ADR-005: Estratégia de Persistência e Banco de Dados Relacional (PostgreSQL)
 
-* **Status:** Aceito
-* **Data:** 27 de Julho de 2026
-* **Decisores:** Time de Arquitetura e Engenharia Vortex Engine
-* **Contexto Técnico:** Monólito Modular (ADR-001) / Arquitetura Hexagonal (ADR-002) / Spring Boot (ADR-003) / Module Map (ADR-004)
-
 ---
 
 ## 1. Contexto e Problema
