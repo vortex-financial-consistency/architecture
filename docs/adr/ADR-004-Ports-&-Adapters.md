@@ -1,4 +1,4 @@
-# ADR-002: Adoção da Arquitetura Hexagonal (Ports & Adapters)
+# ADR-004: Adoção da Arquitetura Hexagonal (Ports & Adapters)
 
 * **Status:** Aceito
 * **Data:** 27 de Julho de 2026
